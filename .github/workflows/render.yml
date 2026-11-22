@@ -1,0 +1,57 @@
+# 🎬 مصنع فيديوهات «يقظ» — الريبو ده فيه ملف التشغيل بس. الكود والموسيقى في الريبو الخاص.
+name: render
+on:
+  repository_dispatch:
+    types: [render]
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+concurrency:
+  group: render
+  cancel-in-progress: false
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: core
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.CORE_REPO }}
+          token: ${{ secrets.CORE_TOKEN }}
+          path: core
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - uses: actions/cache@v4
+        with: {path: ~/.cache/pip, key: pip-chatterbox-v1}
+      - uses: actions/cache@v4
+        id: hf
+        with: {path: hf-cache, key: hf-egyptian-tts-v1}
+      - name: voice (offline Egyptian, fallback)
+        run: |
+          pip install -q torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu >/dev/null
+          pip install -q chatterbox-tts huggingface_hub safetensors "setuptools<81" >/dev/null
+      - name: voice model (first time only)
+        if: steps.hf.outputs.cache-hit != 'true'
+        env:
+          HF_HOME: ${{ github.workspace }}/hf-cache
+        run: python core/tts/tts.py "أهلاً بيك" /tmp/warm.wav >/dev/null 2>&1 && ls -la /tmp/warm.wav | awk '{print "warm ok", $5}'
+      - name: setup
+        run: |
+          sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq ffmpeg fonts-noto-color-emoji >/dev/null
+          cd core/motion && npm ci --silent --no-audit --no-fund >/dev/null && npx remotion browser ensure >/dev/null
+      - name: render
+        env:
+          RENDER_KEY: ${{ secrets.RENDER_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YAQIZ_API: https://nashr.nashr-app.workers.dev
+          FONTS_DIR: ${{ github.workspace }}/core/motion/public/fonts
+          FFMPEG: /usr/bin/ffmpeg
+          QUIET: "1"
+          LOCAL_TTS: ${{ github.workspace }}/core/tts/speak.sh
+          HF_HOME: ${{ github.workspace }}/hf-cache
+          DRAIN_MIN: "50"
+        run: cd core && node render.mjs --drain
